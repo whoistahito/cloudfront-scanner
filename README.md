@@ -11,7 +11,7 @@ A tool for finding CloudFront edge IPs that accept TLS connections with SNI=127.
 
 ## Installation
 ```bash
-git clone https://github.com/YOUR_USERNAME/cloudfront-scanner.git
+git clone https://github.com/useruserdev/cloudfront-scanner.git
 cd cloudfront-scanner
 ```
 
