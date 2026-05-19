@@ -1,60 +1,87 @@
 # CloudFront IP Scanner
 
-A tool for finding CloudFront edge IPs that accept TLS connections with SNI=127.0.0.1. Useful for CDN-based proxy configurations.
+Finds CloudFront edge IPs that accept TLS connections with `SNI=127.0.0.1` and are reachable
+from censored networks. Run this script from inside the censored region — IPs that time out
+are not routed there and would be useless anyway.
 
-## Features
-
-- Fetches official CloudFront IP ranges from AWS
-- Multi-threaded scanning (100+ concurrent connections)
-- Generates ready-to-use VLESS configs
-- Supports custom SNI values
-
-## Installation
-```bash
-git clone https://github.com/useruserdev/cloudfront-scanner.git
-cd cloudfront-scanner
-```
-
-No dependencies required — uses only Python standard library.
+No external dependencies — Python standard library only.
 
 ## Usage
+
 ```bash
-# Quick scan (samples from all CloudFront ranges)
-python3 scanner.py --quick
+# Fast scan — best starting point (~488k IPs, ~5-15 min)
+python scanner.py --fast
 
-# Scan specific CIDR range
-python3 scanner.py --range 3.160.144.0/22
+# Full priority scan — thorough, finds more IPs (~2.3M IPs, ~20-60 min)
+python scanner.py --priority
 
-# Generate VLESS configs
-python3 scanner.py --quick --vless
+# Verify IPs work end-to-end with your CloudFront distribution
+python scanner.py --fast --ws-host YOUR-DIST.cloudfront.net --ws-path /your/path
 
-# Custom SNI
-python3 scanner.py --quick --sni localhost
+# Generate ready-to-use vless:// configs
+python scanner.py --fast --vless --uuid YOUR-UUID --ws-host YOUR-DIST.cloudfront.net
 
-# More workers for faster scanning
-python3 scanner.py --range 3.160.0.0/16 --workers 200
+# Scan a specific range
+python scanner.py --range 13.249.0.0/16
+
+# Increase timeout for slow/censored connections (recommended)
+python scanner.py --fast --timeout 6
 ```
 
 ## Options
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--quick` | Quick scan (sample IPs from all ranges) | - |
-| `--range CIDR` | Scan specific CIDR range | - |
-| `--file FILE` | Scan IPs from file | - |
-| `--sni HOST` | SNI for TLS handshake | 127.0.0.1 |
-| `--workers N` | Concurrent threads | 100 |
-| `--samples N` | IPs per range in quick mode | 30 |
-| `--vless` | Generate VLESS URLs | - |
-| `--output FILE` | Output file | working_ips.txt |
-| `--host HOST` | WebSocket host for VLESS | - |
+| `--fast` | Scan highest-density ranges (~488k IPs) | - |
+| `--priority` | Scan all known-good ranges (~2.3M IPs) | - |
+| `--all` | Scan all CloudFront ranges from AWS API | - |
+| `--range CIDR` | Scan a specific CIDR range exhaustively | - |
+| `--file FILE` | Scan IPs from a file (one per line) | - |
+| `--sni HOST` | SNI for TLS handshake | `127.0.0.1` |
+| `--ws-host HOST` | Host header for stage-2 WS verification | disabled |
+| `--ws-path PATH` | WebSocket path for stage-2 verification | `/api/v1/chat` |
+| `--workers N` | Concurrent threads | `200` |
+| `--timeout N` | Per-IP timeout in seconds | `3.0` |
+| `--vless` | Generate vless:// URIs for found IPs | - |
+| `--uuid UUID` | UUID to embed in vless configs | - |
+| `--output FILE` | Output file for working IPs | `working_ips.txt` |
 
-## Output
+## How it scans
 
-- `working_ips.txt` — List of working IPs
-- `working_ips_vless.txt` — Ready VLESS configs (with `--vless` flag)
+Every range is expanded into `/24` subnets and each subnet is scanned exhaustively —
+no sampling. This guarantees every IP is checked regardless of range size.
 
-## VLESS Clients
+**Stage 1 — TLS handshake** (`SNI=127.0.0.1`): IPs that complete the handshake pass.
+Results shown as `TLS-only`. These are valid to use without stage 2.
+
+**Stage 2 — WebSocket upgrade** (only when `--ws-host` is set): sends a real WS upgrade
+with your CloudFront domain as the `Host` header.
+- `101 WS` — confirmed end-to-end working
+- `HTTP 421` — not usable (strict Host matching)
+
+## Output files
+
+- `working_ips.txt` — one IP per line
+- `working_ips_vless.txt` — vless:// URIs (with `--vless` flag)
+
+## Bundled IP ranges
+
+`cf_ranges.json` is bundled and used as a fallback if the AWS API is unreachable.
+Update it periodically from an uncensored connection:
+
+```bash
+python -c "
+import json, urllib.request
+with urllib.request.urlopen('https://ip-ranges.amazonaws.com/ip-ranges.json') as r:
+    data = json.loads(r.read())
+cf = sorted(set(p['ip_prefix'] for p in data['prefixes'] if p['service'] == 'CLOUDFRONT'))
+with open('cf_ranges.json', 'w') as f:
+    json.dump({'updated': data['createDate'], 'ranges': cf}, f, indent=2)
+print(len(cf), 'ranges saved')
+"
+```
+
+## VLESS clients
 
 | Platform | Apps |
 |----------|------|
